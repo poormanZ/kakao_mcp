@@ -1,89 +1,54 @@
-import asyncio
-from fastapi import FastAPI, Request
-from mcp.server import Server
-from mcp.server.sse import SseServerTransport
-from mcp.types import Tool, TextContent
+from mcp.server.fastmcp import FastMCP
 
-# 서버 이름 (kakao 단어 배제)
-mcp_server = Server("music-trend-service-server")
+# PlayMCP 가이드 준수:
+# - 서버명/툴명에 "kakao" 포함 불가 (대소문자 무관)
+# - Streamable HTTP 방식 필수
+# - Stateless 권장
+mcp = FastMCP(
+    name="music-trend-service-server",
+    host="0.0.0.0",
+    port=8000,
+    stateless_http=True,   # PlayMCP 가이드: Stateless 권장
+)
 
-app = FastAPI(title="PlayMCP Compliant Gateway")
-sse_transport = SseServerTransport("/messages")
+@mcp.tool(
+    # 1. 툴 이름: 영문/숫자/_ 만 허용, "kakao" 포함 불가
+    name="get_trending_music",
 
-@mcp_server.list_tools()
-async def handle_list_tools():
+    # 2. description: 영문 권장, 서비스명 국/영문 병기, 1024자 이내
+    description=(
+        "Retrieves a list of the current most popular or trending songs "
+        "from Melon(멜론) service."
+    ),
+    # 3. annotations: 5대 요소 모두 지정 필수
+    annotations={
+        "title": "Melon Trending Music Retriever",
+        "readOnlyHint": True,       # 데이터 조회만, 변경 없음
+        "destructiveHint": False,   # 데이터 파괴 없음
+        "openWorldHint": False,     # 외부 상태 변경 없음
+        "idempotentHint": True,     # 멱등성 만족
+    },
+)
+def get_trending_music(count: int) -> str:
     """
-    PlayMCP 최신 규격을 준수하는 툴 목록 반환
+    Melon(멜론) 실시간 트렌드 음악을 조회합니다.
+
+    Args:
+        count: 조회할 곡 수 (1-10)
     """
-    return [
-        Tool(
-            name="get_trending_music",
-            description="Retrieves a list of the current most popular or trending songs from Melon(멜론) service.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "count": {"type": "integer", "description": "Number of songs to retrieve (1-10)"}
-                },
-                "required": ["count"]
-            },
-            annotations={
-                "title": "Melon Trending Music Retriever",
-                "readOnlyHint": True,
-                "destructiveHint": False,
-                "openWorldHint": False,
-                "idempotentHint": True
-            }
-        )
-    ]
+    # PlayMCP 가이드: result 크기 최소화, 정제된 마크다운 형식 권장
+    count = max(1, min(count, 10))  # 1~10 범위 보정
 
-@mcp_server.call_tool()
-async def handle_call_tool(name: str, arguments: dict | None):
-    """툴 실행 및 결과 반환"""
-    if name == "get_trending_music":
-        count = arguments.get("count", 5) if arguments else 5
-
-        markdown_result = (
-            "### Melon(멜론) 실시간 트렌드 TOP 3\n"
-            "1. **Song A** - Artist X\n"
-            "2. **Song B** - Artist Y\n"
-            "3. **Song C** - Artist Z\n"
-            f"\n*조회된 개수: {count}개*"
-        )
-
-        return [TextContent(type="text", text=markdown_result)]
-
-    raise ValueError(f"Unknown tool: {name}")
-
-
-# --- SSE 엔드포인트 (MCP 연결용) ---
-
-@app.get("/")
-async def root():
-    return {"status": "healthy"}
-
-@app.get("/sse")
-async def sse_endpoint(request: Request):
-    """SSE 연결 엔드포인트 - MCP 클라이언트가 여기로 접속합니다"""
-    async with sse_transport.connect_sse(
-        request.scope,
-        request.receive,
-        request._send,
-    ) as (read_stream, write_stream):
-        await mcp_server.run(
-            read_stream,
-            write_stream,
-            mcp_server.create_initialization_options(),
-        )
-
-@app.post("/messages")
-async def messages_endpoint(request: Request):
-    """POST 메시지 엔드포인트 - SSE 세션으로 메시지를 라우팅합니다"""
-    await sse_transport.handle_post_message(
-        request.scope,
-        request.receive,
-        request._send,
+    markdown_result = (
+        "### Melon(멜론) 실시간 트렌드 TOP 3\n"
+        "1. **Song A** - Artist X\n"
+        "2. **Song B** - Artist Y\n"
+        "3. **Song C** - Artist Z\n"
+        f"\n*조회된 개수: {count}개*"
     )
+    return markdown_result
+
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # PlayMCP 가이드: Streamable HTTP 방식만 지원
+    mcp.run(transport="streamable-http")
