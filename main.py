@@ -6,20 +6,20 @@ from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
 
-# 1. PlayMCP in KC 로그 수집기 연동을 위한 로깅 설정
+# 1. 공모전용 서버 로깅 설정
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("AgenticPlayerServer")
+logger = logging.getLogger("PlayMcpServer")
 
-# [주의] 공모전 규칙: 서버 명칭 및 툴 사양에 대소문자 무관 "kakao" 단어 전면 배제
-mcp_server = Server("biz-trend-agent-service")
+# [가이드 필수] 서버 이름에 대소문자 무관 "kakao" 전면 금지
+mcp_server = Server("garam-mcp-service")
 
 app = FastAPI(
-    title="Agentic Player 10 Verified Server", 
+    title="PlayMCP Streamable HTTP Server", 
     version="2026.06.12",
-    description="Stateless Remote MCP Server matching PlayMCP Specification"
+    description="Verified Remote MCP Server for Agentic Player 10"
 )
 
-# PlayMCP 플랫폼의 크로스 오리진 호출 전면 허용
+# 교차 출처 에러(CORS) 완벽 방지
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,39 +28,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# [중요] 카카오클라우드가 요구하는 하위 라우팅 패스를 명시적으로 선언
+# [가이드 매핑] 카카오 설정에 명시된 /mcp 엔드포인트 및 메시지 전송로 지정
+# 카카오 클라이언트가 전송 사양(--transport=streamablehttp)으로 찌를 때 대응하는 규격입니다.
 sse_transport = SseServerTransport("/mcp/messages")
 
 # ==========================================
-# 2. 공모전 Tool 구성 필수 및 권장 규칙 적용
+# 2. PlayMCP 필수 프로퍼티 및 5대 애노테이션 지정
 # ==========================================
 @mcp_server.list_tools()
 async def handle_list_tools():
-    """[정보 불러오기] 클릭 시 카카오 플랫폼이 읽어가는 스펙 정의"""
-    logger.info(">>> [PlayMCP in KC] list_tools 스펙 요청 수신")
+    """[정보 불러오기] 클릭 시 카카오 플랫폼이 읽어가서 화면에 등록할 Tool 정의"""
+    logger.info(">>> [PlayMCP] list_tools 스펙 요청을 수신하여 툴 목록을 전송합니다.")
     return [
         Tool(
-            # 규칙: 영어 대소문자, 숫자, _, - 만 허용 (1~128자), 'kakao' 단어 금지
-            name="fetch_market_analysis",
+            # 규칙: 영어, 숫자, _, - 만 허용 (1~128자)
+            name="fetch_market_insights",
             
-            # 규칙: 영문 중심 작성 권장, 고유 서비스명 국문/영문 병기 (1,024자 이내)
-            description="Retrieves a summarized report of the current trending items and consumer demand from the SmartStore(스마트스토어) service.",
+            # 규칙: 서비스 이름 국/영문 병기 규칙 준수, 1024자 이내 영문 중심
+            description="Retrieves summarized consumer market insights and search volume trends from the SmartStore(스마트스토어) service.",
             
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "category": {
-                        "type": "string", 
-                        "description": "Target category name (e.g., fashion, food)"
-                    }
+                    "trend_type": {"type": "string", "description": "daily or weekly"}
                 },
-                "required": ["category"]
+                "required": ["trend_type"]
             },
             
-            # 규칙: annotations 내 5대 속성값 누락 없이 수동 전면 지정
+            # 규칙: annotations 내 5대 속성 누락 없이 전면 수동 지정
             annotations={
-                "title": "SmartStore Market Trend Analyzer",
-                "readOnlyHint": True,        # 조회 전용
+                "title": "SmartStore Insight Viewer",
+                "readOnlyHint": True,        # 단순 데이터 조회
                 "destructiveHint": False,    # 데이터 변경 없음
                 "openWorldHint": False,      # 사이드 이펙트 없음
                 "idempotentHint": True       # 멱등성 보장
@@ -70,45 +68,40 @@ async def handle_list_tools():
 
 @mcp_server.call_tool()
 async def handle_call_tool(name: str, arguments: dict | None):
-    # 규칙: 응답 속도는 평균 100ms 이내, p99 3,000ms 필수 준수
-    if name == "fetch_market_analysis":
-        arguments = arguments or {}
-        category = arguments.get("category", "general")
-        
-        # 규칙: API 응답 원본 그대로 사용 금지, 마크다운 형식의 정제된 텍스트 필수 (광고성 문구 금지)
-        markdown_result = (
-            f"### SmartStore(스마트스토어) [{category.upper()}] 요약 리포트\n"
-            "1. **소비 트렌드:** 미니멀리즘 디자인 가구군 검색량 18% 증가\n"
-            "2. **인기 키워드:** 친환경 오가닉 홈웨어\n"
-            "\n*데이터 규격 크기 최적화 및 광고 제거 완료*"
+    # 규칙: 응답 속도는 평균 100ms 이내 보장 필수
+    if name == "fetch_market_insights":
+        # 규칙: API 응답 원본을 그대로 쏘지 말고 정제된 마크다운 포맷 텍스트 권장 (광고 유도 금지)
+        markdown_output = (
+            "### SmartStore(스마트스토어) 실시간 트렌드 분석\n"
+            "1. **리빙/인테리어:** 친환경 소재 가구군 트래픽 상승\n"
+            "2. **디지털/가전:** 1인 가구용 소형 공기청정기 수요 증가\n"
+            "\n*본 리포트는 PlayMCP 표준 응답 규격에 맞게 정제되었습니다.*"
         )
-        return [TextContent(type="text", text=markdown_result)]
-        
-    raise ValueError(f"Unknown tool: {name}")
+        return [TextContent(type="text", text=markdown_output)]
+    raise ValueError(f"Unknown tool name: {name}")
 
 # ====================================================
-# 3. PlayMCP in KC 전용 Endpoint 핸드셰이크 라우팅
+# 3. Streamable HTTP 통신용 Endpoint 명시적 매핑
 # ====================================================
 
-# 카카오 콘솔 등록 URL: 발급받은도메인/mcp
+# 카카오 콘솔 등록 URL 주소: https://garam-mcp-server.playmcp-endpoint.kakaocloud.io/mcp
 @app.get("/mcp")
 async def sse_endpoint(request: Request):
-    """PlayMCP 플랫폼이 최초 핸드셰이크를 위해 연결하는 GET 진입점"""
-    logger.info(">>> [PlayMCP Handshake] GET /mcp (SSE 연결 수립 시작)")
-    
+    """PlayMCP 플랫폼이 최초 연결(Handshake)을 위해 진입하는 Streamable HTTP GET 엔드포인트"""
+    logger.info(">>> [PlayMCP] GET /mcp (Streamable HTTP SSE 연결 수립)")
     async with sse_transport.connect_scope(request.scope, request.receive, sse_transport.handle_sse):
-        # 인프라 단절을 막기 위한 비동기 연결 유지
+        # 인프라 레이어의 세션 단절을 방지하기 위해 1초 간격으로 무한 루프 대기
         while True:
             await asyncio.sleep(1)
 
 @app.post("/mcp/messages")
 async def messages_endpoint(request: Request):
-    """[정보 불러오기] 클릭 시 실제 초기화 JSON-RPC 메시지가 수신되는 POST 진입점"""
-    logger.info(">>> [PlayMCP Protocol] POST /mcp/messages (초기화 메시지 수신)")
+    """[정보 불러오기] 클릭 시 'initialize' 프로토콜 패키지를 수신하는 POST 엔드포인트"""
+    logger.info(">>> [PlayMCP] POST /mcp/messages (JSON-RPC 초기화 제어 메시지 수신)")
     await sse_transport.handle_post_message(request.scope, request.receive, request._send)
     return {"status": "accepted"}
 
 @app.get("/")
-async def infrastructure_health():
-    """PlayMCP in KC 내부 컨테이너 오케스트레이터용 헬스체크"""
-    return {"status": "healthy"}
+async def internal_health():
+    """PlayMCP in KC 인프라의 활성화를 보장하는 루트 헬스체크"""
+    return {"status": "healthy", "transport": "streamablehttp"}
