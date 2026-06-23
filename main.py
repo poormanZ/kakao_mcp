@@ -4,7 +4,7 @@ from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp.types import Tool, TextContent
 
-# [수정] 서버 이름에 "kakao" 단어를 완전히 배제합니다.
+# 서버 이름 (kakao 단어 배제)
 mcp_server = Server("music-trend-service-server")
 
 app = FastAPI(title="PlayMCP Compliant Gateway")
@@ -13,17 +13,12 @@ sse_transport = SseServerTransport("/messages")
 @mcp_server.list_tools()
 async def handle_list_tools():
     """
-    PlayMCP 최신 규격(2026-06-12)을 준수하는 툴 목록 반환
+    PlayMCP 최신 규격을 준수하는 툴 목록 반환
     """
     return [
         Tool(
-            # 1. 툴 이름 규칙: 영문, 숫자, _, - 만 허용 ("kakao" 포함 금지)
             name="get_trending_music",
-            
-            # 2. 설명 규칙: 영문 권장, 서비스명 국문/영문 병기 (Melon(멜론)), 1024자 이내
             description="Retrieves a list of the current most popular or trending songs from Melon(멜론) service.",
-            
-            # 3. 입력 스키마 정의
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -31,14 +26,12 @@ async def handle_list_tools():
                 },
                 "required": ["count"]
             },
-            
-            # 4. [필수] 가이드라인 명시 annotations 5대 요소 누락 없이 전체 지정
             annotations={
                 "title": "Melon Trending Music Retriever",
-                "readOnlyHint": True,         # 단순히 데이터만 조회하므로 True
-                "destructiveHint": False,     # 데이터를 삭제하거나 파괴하지 않으므로 False
-                "openWorldHint": False,       # 외부 세계 상태를 무작정 바꾸지 않음
-                "idempotentHint": True        # 여러 번 호출해도 결과가 같은 멱등성 만족
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": False,
+                "idempotentHint": True
             }
         )
     ]
@@ -48,9 +41,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
     """툴 실행 및 결과 반환"""
     if name == "get_trending_music":
         count = arguments.get("count", 5) if arguments else 5
-        
-        # 가이드라인 준수: API 원본 데이터를 그대로 쏘지 말고, 최소한의 정제된 마크다운으로 구성
-        # 데이터 크기를 최소화하여 LLM이 답변하기 좋게 만듭니다.
+
         markdown_result = (
             "### Melon(멜론) 실시간 트렌드 TOP 3\n"
             "1. **Song A** - Artist X\n"
@@ -58,12 +49,13 @@ async def handle_call_tool(name: str, arguments: dict | None):
             "3. **Song C** - Artist Z\n"
             f"\n*조회된 개수: {count}개*"
         )
-        
+
         return [TextContent(type="text", text=markdown_result)]
-    
+
     raise ValueError(f"Unknown tool: {name}")
 
-# --- PlayMCP 연동 프로토콜 (Streamable HTTP / SSE) ---
+
+# --- SSE 엔드포인트 (MCP 연결용) ---
 
 @app.get("/")
 async def root():
@@ -71,13 +63,26 @@ async def root():
 
 @app.get("/sse")
 async def sse_endpoint(request: Request):
-    async with sse_transport.connect_scope(request.scope, request.receive, sse_transport.handle_sse):
-        await asyncio.Event().wait()
+    """SSE 연결 엔드포인트 - MCP 클라이언트가 여기로 접속합니다"""
+    async with sse_transport.connect_sse(
+        request.scope,
+        request.receive,
+        request._send,
+    ) as (read_stream, write_stream):
+        await mcp_server.run(
+            read_stream,
+            write_stream,
+            mcp_server.create_initialization_options(),
+        )
 
 @app.post("/messages")
 async def messages_endpoint(request: Request):
-    await sse_transport.handle_post_message(request.scope, request.receive, request._send)
-    return {"status": "accepted"}
+    """POST 메시지 엔드포인트 - SSE 세션으로 메시지를 라우팅합니다"""
+    await sse_transport.handle_post_message(
+        request.scope,
+        request.receive,
+        request._send,
+    )
 
 if __name__ == "__main__":
     import uvicorn
