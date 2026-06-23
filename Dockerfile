@@ -2,20 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 필수 시스템 빌드 도구 설치
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 파이썬 패키지 의존성 설치
+# 패키지 복사 및 의존성 주입
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 전체 소스 코드 복사
 COPY . .
 
-# PlayMCP 원격 통신을 위한 웹 서버 포트 개방
+# [★핵심] PlayMCP in KC의 컨테이너 포트 가이드 설정과 uvicorn 포트를 일치시킵니다.
 EXPOSE 8000
 
-# 가이드라인 준수: Stateless 원격 구동을 위한 uvicorn 실행 (0.0.0.0 필수)
+# 인프라 내부 바인딩 오류 방지를 위해 0.0.0.0 강제 적용
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
