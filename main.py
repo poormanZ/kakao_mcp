@@ -133,7 +133,7 @@ async def health_check():
     """서버 작동 여부 및 응답속도 보장을 위한 초경량 헬스체크"""
     return {"status": "UP", "stateless": True}
 
-@app.get("/sse")
+@app.get("/mcp")
 async def sse_endpoint(request: Request):
     """PlayMCP 플랫폼의 연결 엔드포인트"""
     async with sse_transport.connect_scope(request.scope, request.receive, sse_transport.handle_sse):
